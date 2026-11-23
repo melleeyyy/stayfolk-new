@@ -1,0 +1,51 @@
+{
+  "name": "StayFolk — hospitality exchange",
+  "short_name": "StayFolk",
+  "description": "Free stays with verified local hosts in 40+ cities. Travel like a local, host like a friend.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#FFFFFF",
+  "theme_color": "#3A79F7",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": [
+    "travel",
+    "social"
+  ],
+  "icons": [
+    {
+      "src": "assets/img/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/img/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/img/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Find a host",
+      "url": "./#/explore"
+    },
+    {
+      "name": "Messages",
+      "url": "./#/messages"
+    },
+    {
+      "name": "Form C checklist",
+      "url": "./#/form-c"
+    }
+  ]
+}

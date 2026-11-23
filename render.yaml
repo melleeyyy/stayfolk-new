@@ -1,0 +1,42 @@
+# Render blueprint — one web service, Node runtime, no build step.
+# Import this repo at https://render.com/docs/blueprint-spec
+#
+# Full click-by-click instructions live in RENDER.md.
+#
+# NOTE: Render's free plan has an ephemeral filesystem, so accounts and photos
+# are lost whenever the service restarts or redeploys. The `disk` block below
+# keeps data permanently but requires a paid instance type.
+services:
+  - type: web
+    name: stayfolk
+    runtime: node
+    plan: free
+    buildCommand: "node -e \"console.log('no build step')\""
+    startCommand: "node server/index.js"
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # absolute URL used in verification / reset emails — set this to your
+      # https://<service>.onrender.com address after the first deploy
+      - key: PUBLIC_URL
+        sync: false
+      # pick one mail route (all free); leave them empty to log links instead
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+    # disk:
+    #   name: stayfolk-data
+    #   mountPath: /app/server/data
+    #   sizeGB: 1
