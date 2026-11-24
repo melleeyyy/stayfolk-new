@@ -7,9 +7,9 @@ StayFolk is a working Couchsurfing-style site: people create a profile, upload p
 | Mode | What it is | Where |
 |---|---|---|
 | **Live** | Real accounts, photos, requests and messages shared between people on different devices | `node server/index.js` |
-| **Demo** | Everything works but state stays in the browser — no sign-up server needed | GitHub Pages |
+| **Preview** | Everything works but state stays in the browser — no sign-up server needed | GitHub Pages |
 
-**Live demo (browser-only):** https://melleeyyy.github.io/stayfolk/
+**Browser-only preview:** https://melleeyyy.github.io/stayfolk/
 **Run it for real:** see [Getting started](#getting-started) — one command, no dependencies.
 
 ---

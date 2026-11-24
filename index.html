@@ -18,6 +18,14 @@
   <link rel="stylesheet" href="assets/css/app.css" />
 </head>
 <body>
+  <div id="splash" aria-hidden="true">
+    <div class="splash__inner">
+      <svg class="splash__mark" viewBox="0 0 64 64" width="72" height="72"><rect width="64" height="64" rx="18" fill="#fff"/><path d="M14 31 32 16l18 15" fill="none" stroke="#3A79F7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 30v16h24V30" fill="none" stroke="#3A79F7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="38" r="4" fill="#FF7A59"/></svg>
+      <div class="splash__word"><span style="--i:0">S</span><span style="--i:1">t</span><span style="--i:2">a</span><span style="--i:3">y</span><span style="--i:4">F</span><span style="--i:5">o</span><span style="--i:6">l</span><span style="--i:7">k</span></div>
+      <p class="splash__tag">Travel like a local</p>
+    </div>
+  </div>
+  <script>try{if(sessionStorage.getItem('sf.splash')){var s=document.getElementById('splash');s&&s.remove()}else{setTimeout(function(){var s=document.getElementById('splash');s&&s.remove()},6000)}}catch(e){}</script>
   <a class="skip-link" href="#main">Skip to main content</a>
   <header id="site-header" class="site-header"></header>
   <main id="main" tabindex="-1"></main>
@@ -27,7 +35,7 @@
   <noscript>
     <div style="padding:40px;font-family:system-ui;text-align:center">
       <h1>StayFolk</h1>
-      <p>This demo needs JavaScript enabled to run.</p>
+      <p>StayFolk needs JavaScript enabled to run.</p>
     </div>
   </noscript>
   <script type="module" src="assets/js/app.js"></script>

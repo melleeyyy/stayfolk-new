@@ -4,7 +4,7 @@
  * fallback, so the demo still opens on a train with no signal.
  */
 
-const CACHE = 'stayfolk-v4';
+const CACHE = 'stayfolk-v6';
 
 const SHELL = [
   './',

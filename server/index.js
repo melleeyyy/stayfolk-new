@@ -144,6 +144,9 @@ function userHost(u) {
     rules: hosting.rules || [],
     avatar: u.avatar || null,
     cover: u.cover || null,
+    gallery: u.gallery || [],
+    availableFrom: hosting.availableFrom || '',
+    availableTo: hosting.availableTo || '',
     isSeed: false,
   };
 }
@@ -154,6 +157,21 @@ function allHosts() {
 }
 
 const findHost = (id) => allHosts().find((h) => h.id === id) || null;
+
+const userById = (id) => db.users.find((u) => u.id === id) || null;
+const isBlocked = (aId, bId) => {
+  const a = userById(aId), b = userById(bId);
+  return Boolean((a && (a.blocks || []).includes(bId)) || (b && (b.blocks || []).includes(aId)));
+};
+const esc = (x) => String(x).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+/** Email alert; never blocks or breaks the request that triggered it. */
+function notify(userId, subject, text) {
+  const u = userById(userId);
+  if (!u || u.notify === false || !u.email) return;
+  const base = process.env.PUBLIC_URL || '';
+  const body = `${text}${base ? `\n\n${base}/#/dashboard` : ''}`;
+  Promise.resolve(mailer.send({ to: u.email, subject, text: body, html: `<p>${esc(body).replace(/\n/g, '<br>')}</p>` })).catch(() => {});
+}
 
 /* ------------------------------------------------------------------- auth */
 
@@ -223,6 +241,9 @@ const publicUser = (u) => ({
   cover: u.cover || null,
   verified: Boolean(u.verified),
   role: u.role || 'member',
+  gallery: u.gallery || [],
+  blocks: u.blocks || [],
+  notify: u.notify !== false,
   hosting: u.hosting || { enabled: false, space: '', maxGuests: 1, womenOnly: false, tags: [], rules: [] },
   createdAt: u.createdAt,
 });
@@ -578,6 +599,7 @@ async function handleApi(req, res, url) {
     if (body.languages !== undefined) {
       me.languages = (Array.isArray(body.languages) ? body.languages : []).slice(0, 12).map((l) => String(l).slice(0, 30));
     }
+    if (body.notify !== undefined) me.notify = Boolean(body.notify);
     if (body.hosting !== undefined && typeof body.hosting === 'object') {
       const h = body.hosting;
       me.hosting = {
@@ -585,6 +607,8 @@ async function handleApi(req, res, url) {
         space: String(h.space || '').slice(0, 120),
         maxGuests: Math.min(6, Math.max(1, Number(h.maxGuests) || 1)),
         womenOnly: Boolean(h.womenOnly),
+        availableFrom: /^\d{4}-\d{2}-\d{2}$/.test(h.availableFrom || '') ? h.availableFrom : '',
+        availableTo: /^\d{4}-\d{2}-\d{2}$/.test(h.availableTo || '') ? h.availableTo : '',
         tags: (Array.isArray(h.tags) ? h.tags : []).slice(0, 8).map((t) => String(t).slice(0, 30)),
         rules: (Array.isArray(h.rules) ? h.rules : []).slice(0, 8).map((t) => String(t).slice(0, 120)),
       };
@@ -637,7 +661,80 @@ async function handleApi(req, res, url) {
     return json(res, 200, { user: publicUser(me) });
   }
 
+  /* ---- photo gallery ---- */
+  if (pathname === '/api/me/gallery' && method === 'POST') {
+    if (!me) return json(res, 401, { error: 'Sign in first.' });
+    const body = await readBody(req);
+    me.gallery = me.gallery || [];
+    if (me.gallery.length >= 8) return json(res, 422, { error: 'You can add up to 8 photos.' });
+    const m = String(body.dataUrl || '').match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) return json(res, 422, { error: 'Unsupported image format.' });
+    const buf = Buffer.from(m[2], 'base64');
+    if (buf.length > 6 * 1024 * 1024) return json(res, 413, { error: 'Image is too large.' });
+    const name = `${me.id}-g-${Date.now()}${m[1] === 'png' ? '.png' : m[1] === 'webp' ? '.webp' : '.jpg'}`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
+    me.gallery.push(`/uploads/${name}`);
+    save();
+    return json(res, 200, { user: publicUser(me) });
+  }
+  if (pathname === '/api/me/gallery' && method === 'DELETE') {
+    if (!me) return json(res, 401, { error: 'Sign in first.' });
+    const i = Number(searchParams.get('i'));
+    me.gallery = me.gallery || [];
+    if (!Number.isInteger(i) || i < 0 || i >= me.gallery.length) return json(res, 422, { error: 'Photo not found.' });
+    const [gone] = me.gallery.splice(i, 1);
+    try { fs.unlinkSync(path.join(UPLOAD_DIR, path.basename(gone))); } catch { /* already gone */ }
+    save();
+    return json(res, 200, { user: publicUser(me) });
+  }
+
+  /* ---- member profile + reviews received ---- */
+  if (pathname.startsWith('/api/members/') && method === 'GET') {
+    if (!me) return json(res, 401, { error: 'Sign in first.' });
+    const id = decodeURIComponent(pathname.split('/')[3] || '');
+    const u = userById(id);
+    const h = u ? null : findHost(id);
+    if (!u && !h) return json(res, 404, { error: 'Member not found.' });
+    const member = u
+      ? { id: u.id, name: u.name, username: u.username || '', city: u.city || '', bio: u.bio || '', languages: u.languages || [],
+          avatar: u.avatar || null, cover: u.cover || null, gallery: u.gallery || [], verified: Boolean(u.verified),
+          emailVerified: Boolean(u.emailVerified), joined: (u.createdAt || now()).slice(0, 7), isHost: Boolean(u.hosting && u.hosting.enabled) }
+      : { id: h.id, name: h.name, username: '', city: h.cityName || '', bio: h.bio || '', languages: h.languages || [],
+          avatar: h.avatar || null, cover: h.cover || null, gallery: h.gallery || [], verified: Boolean(h.verified),
+          emailVerified: false, joined: h.joined || '', isHost: true };
+    return json(res, 200, { member, reviews: db.reviews.filter((r) => r.hostId === id).slice(-50).reverse() });
+  }
+
   /* ---- requests ---- */
+  if (pathname === '/api/blocks' && (method === 'POST' || method === 'DELETE')) {
+    if (!me) return json(res, 401, { error: 'Sign in first.' });
+    const body = method === 'POST' ? await readBody(req) : { userId: searchParams.get('userId') };
+    const target = String(body.userId || '');
+    if (!target || target === me.id || !userById(target)) return json(res, 422, { error: 'Unknown member.' });
+    me.blocks = (me.blocks || []).filter((x) => x !== target);
+    if (method === 'POST') me.blocks.push(target);
+    save();
+    return json(res, 200, { blocks: me.blocks });
+  }
+
+  if (pathname === '/api/me' && method === 'DELETE') {
+    if (!me) return json(res, 401, { error: 'Sign in first.' });
+    const body = await readBody(req);
+    if (!verifyPassword(String(body.password || ''), me.password)) {
+      return json(res, 403, { error: 'Your password is not right.' });
+    }
+    const myThreads = new Set(db.threads.filter((t) => t.userId === me.id || t.hostId === me.id).map((t) => t.id));
+    db.messages = db.messages.filter((m) => !myThreads.has(m.threadId));
+    db.threads = db.threads.filter((t) => !myThreads.has(t.id));
+    db.requests = db.requests.filter((r) => r.userId !== me.id && r.hostId !== me.id);
+    db.reviews = db.reviews.filter((r) => r.authorId !== me.id && r.hostId !== me.id);
+    for (const [token, sess] of Object.entries(db.sessions)) if (sess.userId === me.id) delete db.sessions[token];
+    db.users = db.users.filter((u) => u.id !== me.id);
+    res.setHeader('Set-Cookie', `${COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`);
+    save();
+    return json(res, 200, { ok: true });
+  }
+
   if (pathname === '/api/requests' && method === 'POST') {
     if (!me) return json(res, 401, { error: 'Sign in first.' });
     const body = await readBody(req);
@@ -646,6 +743,16 @@ async function handleApi(req, res, url) {
     if (host.id === me.id) return json(res, 422, { error: 'You cannot request your own place.' });
     if (!body.from || !body.to || !body.message) {
       return json(res, 422, { error: 'Dates and a message are required.' });
+    }
+    if (String(body.to) < String(body.from)) return json(res, 422, { error: 'The end date is before the start date.' });
+    if (isBlocked(me.id, host.id)) return json(res, 403, { error: 'You cannot send a request to this member.' });
+    const av = (userById(host.id) || {}).hosting || host.hosting || {};
+    if ((av.availableFrom && String(body.from) < av.availableFrom) || (av.availableTo && String(body.to) > av.availableTo)) {
+      return json(res, 422, { error: `This host is only available ${av.availableFrom || '…'} to ${av.availableTo || '…'}.` });
+    }
+    const today = now().slice(0, 10);
+    if (db.requests.filter((r) => r.userId === me.id && String(r.createdAt).slice(0, 10) === today).length >= 5) {
+      return json(res, 429, { error: 'You can send up to 5 requests a day. Try again tomorrow.' });
     }
 
     const open = db.requests.filter(
@@ -668,6 +775,7 @@ async function handleApi(req, res, url) {
     };
     db.requests.unshift(request);
     save();
+    notify(host.id, `New stay request from ${me.name}`, `${me.name} asked to stay ${request.from} → ${request.to}.\n\n"${request.message.slice(0, 300)}"`);
     return json(res, 201, { request });
   }
 
@@ -677,6 +785,26 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const request = db.requests.find((r) => r.id === id);
     if (!request) return json(res, 404, { error: 'Request not found.' });
+    if (request.userId === me.id && request.hostId !== me.id) {
+      // guest side: cancel, or edit while still pending
+      if (body.status === 'cancelled') {
+        if (!['pending', 'accepted'].includes(request.status)) return json(res, 422, { error: 'This request can no longer be cancelled.' });
+        request.status = 'cancelled';
+        request.respondedAt = now();
+        save();
+        notify(request.hostId, `${me.name} cancelled their request`, `${me.name} cancelled the request for ${request.from} → ${request.to}.`);
+        return json(res, 200, { request });
+      }
+      if (request.status !== 'pending') return json(res, 422, { error: 'Only pending requests can be edited.' });
+      const from = String(body.from || request.from), to = String(body.to || request.to);
+      if (to < from) return json(res, 422, { error: 'The end date is before the start date.' });
+      request.from = from; request.to = to;
+      request.guests = Math.min(6, Math.max(1, Number(body.guests) || request.guests));
+      request.respondedAt = now();
+      save();
+      notify(request.hostId, `${me.name} changed their request`, `New dates: ${from} → ${to}.`);
+      return json(res, 200, { request });
+    }
     if (request.hostId !== me.id) return json(res, 403, { error: 'Only the host can answer.' });
     if (!['accepted', 'declined'].includes(body.status)) {
       return json(res, 422, { error: 'Status must be accepted or declined.' });
@@ -684,6 +812,7 @@ async function handleApi(req, res, url) {
     request.status = body.status;
     request.respondedAt = now();
     save();
+    notify(request.userId, `Your request was ${body.status}`, `${me.name} ${body.status} your stay request for ${request.from} → ${request.to}.`);
     return json(res, 200, { request });
   }
 
@@ -733,10 +862,13 @@ async function handleApi(req, res, url) {
       const body = await readBody(req);
       const text = String(body.text || '').trim().slice(0, 4000);
       if (!text) return json(res, 422, { error: 'Message is empty.' });
+      const otherId = thread.userId === me.id ? thread.hostId : thread.userId;
+      if (isBlocked(me.id, otherId)) return json(res, 403, { error: 'You cannot message this member.' });
       const message = { id: uid('m'), threadId, senderId: me.id, text, at: now() };
       db.messages.push(message);
       thread.updatedAt = message.at;
       save();
+      notify(otherId, `New message from ${me.name}`, text.slice(0, 300));
       return json(res, 201, { message });
     }
   }
@@ -759,8 +891,15 @@ async function handleApi(req, res, url) {
   if (pathname === '/api/reviews' && method === 'POST') {
     if (!me) return json(res, 401, { error: 'Sign in first.' });
     const body = await readBody(req);
-    const host = findHost(String(body.hostId || ''));
-    if (!host) return json(res, 404, { error: 'Host not found.' });
+    const host = findHost(String(body.hostId || '')) || userById(String(body.hostId || ''));
+    if (!host) return json(res, 404, { error: 'Member not found.' });
+    if (host.id === me.id) return json(res, 422, { error: 'You cannot review yourself.' });
+    const stayed = db.requests.some((r) => r.status === 'accepted' &&
+      ((r.userId === me.id && r.hostId === host.id) || (r.hostId === me.id && r.userId === host.id)));
+    if (!stayed) return json(res, 403, { error: 'You can review someone after an accepted stay request with them.' });
+    if (db.reviews.some((r) => r.authorId === me.id && r.hostId === host.id)) {
+      return json(res, 409, { error: 'You have already reviewed this member.' });
+    }
     const review = {
       id: uid('rev'),
       hostId: host.id,

@@ -34,7 +34,7 @@ export const api = {
   get: (path) => request('GET', path),
   post: (path, body) => request('POST', path, body),
   patch: (path, body) => request('PATCH', path, body),
-  del: (path) => request('DELETE', path),
+  del: (path, body) => request('DELETE', path, body),
 };
 
 /** Returns the bootstrap payload when a real server answers, otherwise null. */

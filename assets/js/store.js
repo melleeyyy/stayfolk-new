@@ -269,6 +269,7 @@ function hostFromUser(me) {
     rules: hosting.rules || [],
     avatar: me.avatar || null,
     cover: me.cover || null,
+    gallery: me.gallery || [],
     isSeed: false,
   };
 }
@@ -561,4 +562,108 @@ export function setLang(code) {
 }
 export function setTheme(theme) {
   commit({ theme });
+}
+
+/* ------------------------------------------------ safety + request control */
+
+export const blockedIds = () => (currentUser() && currentUser().blocks) || [];
+
+export async function blockUser(id, on = true) {
+  if (mode === 'remote') {
+    const { blocks } = on
+      ? await api.post('api/blocks', { userId: id })
+      : await api.del(`api/blocks?userId=${encodeURIComponent(id)}`);
+    commit({ me: { ...state.me, blocks } });
+    return blocks;
+  }
+  const me = currentUser();
+  if (!me) return [];
+  const cur = me.blocks || [];
+  const blocks = on ? [...new Set([...cur, id])] : cur.filter((x) => x !== id);
+  commit({ users: state.users.map((u) => (u.id === me.id ? { ...u, blocks } : u)) });
+  return blocks;
+}
+
+export async function deleteAccount(password) {
+  if (mode === 'remote') {
+    await api.del('api/me', { password });
+    await refresh();
+    return;
+  }
+  const me = currentUser();
+  commit({ session: null, users: state.users.filter((u) => !me || u.id !== me.id) });
+}
+
+export async function editRequest(id, patch) {
+  if (mode === 'remote') {
+    const { request } = await api.patch(`api/requests/${id}`, patch);
+    commit({ requests: state.requests.map((r) => (r.id === id ? request : r)) });
+    return request;
+  }
+  commit({ requests: state.requests.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+  return state.requests.find((r) => r.id === id);
+}
+
+/* ------------------------------------------------ gallery + member profiles */
+
+export function galleryFor(id) {
+  if (mode === 'remote') {
+    const me = state.me;
+    if (me && me.id === id) return me.gallery || [];
+    const host = hostById(id);
+    return (host && host.gallery) || [];
+  }
+  const entry = state.photos && state.photos[photoKey(id)];
+  return (entry && entry.gallery) || [];
+}
+
+export async function addGalleryPhoto(id, dataUrl) {
+  if (mode === 'remote') {
+    const { user } = await api.post('api/me/gallery', { dataUrl });
+    const me = { ...state.me, ...user };
+    commit({ me, hosts: state.hosts.map((h) => (h.id === me.id ? { ...h, gallery: user.gallery } : h)) });
+    return me;
+  }
+  const key = photoKey(id);
+  const cur = galleryFor(id);
+  if (cur.length >= 8) throw new Error('You can add up to 8 photos.');
+  commit({ photos: { ...(state.photos || {}), [key]: { ...((state.photos || {})[key] || {}), gallery: [...cur, dataUrl] } } });
+}
+
+export async function removeGalleryPhoto(id, index) {
+  if (mode === 'remote') {
+    const { user } = await api.del(`api/me/gallery?i=${index}`);
+    const me = { ...state.me, ...user };
+    commit({ me, hosts: state.hosts.map((h) => (h.id === me.id ? { ...h, gallery: user.gallery } : h)) });
+    return me;
+  }
+  const key = photoKey(id);
+  const next = galleryFor(id).filter((_, i) => i !== index);
+  commit({ photos: { ...(state.photos || {}), [key]: { ...((state.photos || {})[key] || {}), gallery: next } } });
+}
+
+const memberCache = {};
+export const cachedMember = (id) => (memberCache[id] && Date.now() - memberCache[id].at < 30000 ? memberCache[id].data : null);
+
+export async function fetchMember(id) {
+  let data;
+  if (mode === 'remote') {
+    data = await api.get(`api/members/${encodeURIComponent(id)}`);
+  } else {
+    const u = state.users.find((x) => x.id === id);
+    const h = hostById(id);
+    const src = u || h;
+    if (!src) throw new Error('Member not found.');
+    data = {
+      member: {
+        id, name: src.name, username: src.username || '', city: src.city || src.cityName || '', bio: src.bio || '',
+        languages: src.languages || [], avatar: photoFor(id, 'avatar') || src.avatar || null,
+        cover: photoFor(id, 'cover') || src.cover || null, gallery: galleryFor(id),
+        verified: Boolean(src.verified), emailVerified: Boolean(src.emailVerified), joined: '', isHost: Boolean(h),
+      },
+      reviews: state.reviews.filter((r) => r.hostId === id),
+    };
+  }
+  memberCache[id] = { data, at: Date.now() };
+  return data;
 }

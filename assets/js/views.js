@@ -376,7 +376,9 @@ export function hostView(id) {
 
   <div class="container profile-layout">
     <div class="stack" style="gap:32px">
-      <section class="card">
+      ${store.galleryFor(host.id).length ? `<section class="card"><h3 style="margin-bottom:12px">${esc(t('gallery.title'))}</h3>
+      <div class="gallery">${store.galleryFor(host.id).map((src) => `<button type="button" class="gallery__item" data-action="view-photo" data-src="${esc(src)}"><img src="${esc(src)}" alt="" loading="lazy" /></button>`).join('')}</div></section>` : ''}
+    <section class="card">
         <h3 style="margin-bottom:10px">${esc(t('host.about'))}</h3>
         <p style="line-height:1.75">${esc(host.bio)}</p>
         <div class="chips" style="margin-top:16px">
@@ -610,13 +612,7 @@ export function authView(mode = 'login') {
         ${isLogin ? `<p class="small text-center" style="margin:0">
           <a class="link" href="#/forgot">${esc(t('auth.forgot'))}</a></p>` : ''}
 
-        ${!store.isRemote() ? `
-        <div class="auth-demo">
-          <strong style="color:var(--text)">${esc(t('auth.demo'))}</strong>
-          <div>${esc(t('nav.dashboard'))}: <code>host@stayfolk.demo</code> / <code>demo1234</code></div>
-          <div>${esc(t('nav.admin'))}: <code>admin@stayfolk.demo</code> / <code>demo1234</code></div>
-          <div>${esc(t('nav.explore'))}: <code>guest@stayfolk.demo</code> / <code>demo1234</code></div>
-        </div>` : ''}
+
       </form>
     </div>
   </div>`;
@@ -671,6 +667,14 @@ export function resetView(token) {
 
 /* -------------------------------------------------------------- dashboard */
 
+function nameFor(id) {
+  const h = store.hostById(id);
+  if (h) return h.name;
+  const th = store.get().threads.find((x) => x.hostId === id || x.userId === id);
+  if (th) return th.hostId === id ? th.hostName : th.guestName;
+  return id;
+}
+
 export function dashboardView(tab = 'requests') {
   const user = store.currentUser();
   if (!user) return authView('login');
@@ -686,7 +690,7 @@ export function dashboardView(tab = 'requests') {
   const accepted = list.filter((r) => r.status === 'accepted').length;
 
   const statusBadge = (s) => {
-    const map = { pending: ['pending', t('dash.pending')], accepted: ['accepted', t('dash.accepted')], declined: ['declined', t('dash.declined')] };
+    const map = { cancelled: ['declined', t('dash.cancelled')], pending: ['pending', t('dash.pending')], accepted: ['accepted', t('dash.accepted')], declined: ['declined', t('dash.declined')] };
     const [kind, label] = map[s] || map.pending;
     return `<span class="badge badge--${kind}">${esc(label)}</span>`;
   };
@@ -698,21 +702,28 @@ export function dashboardView(tab = 'requests') {
       <div class="request-item__head">
         <img class="avatar" src="${avatar(otherParty(r), otherParty(r))}" alt="" />
         <div style="flex:1;min-width:140px">
-          <strong>${esc(otherParty(r))}</strong>
+          <a href="${hostingEnabled && !showTrips ? '#/member/' + r.userId : '#/host/' + r.hostId}"><strong>${esc(otherParty(r))}</strong></a>
           <div class="tiny muted">${esc(r.from)} → ${esc(r.to)} · ${esc(t('req.guests'))}: ${r.guests}</div>
         </div>
         ${statusBadge(r.status)}
       </div>
       <p class="request-item__msg">${esc(r.message)}</p>
+      ${(!hostingEnabled || showTrips) && ['pending', 'accepted'].includes(r.status) ? `
+        <div class="request-item__actions">
+          ${r.status === 'pending' ? `<button class="btn btn--outline btn--sm" data-action="edit-request" data-id="${r.id}">${icon('calendar')}${esc(t('dash.edit'))}</button>` : ''}
+          ${r.status === 'accepted' ? `<button class="btn btn--outline btn--sm" data-action="review-member" data-id="${r.hostId}" data-name="${esc(otherParty(r))}">${icon('star')}${esc(t('dash.review'))}</button>` : ''}
+          <button class="btn btn--ghost btn--sm" data-action="cancel-request" data-id="${r.id}">${icon('x')}${esc(t('dash.cancel'))}</button>
+        </div>` : ''}
       ${hostingEnabled && !showTrips && r.status === 'pending' ? `
         <div class="request-item__actions">
           <button class="btn btn--green btn--sm" data-action="respond" data-id="${r.id}" data-status="accepted">${icon('check')}${esc(t('dash.accept'))}</button>
           <button class="btn btn--outline btn--sm" data-action="respond" data-id="${r.id}" data-status="declined">${icon('x')}${esc(t('dash.decline'))}</button>
           <button class="btn btn--ghost btn--sm" data-action="message-guest" data-id="${r.id}">${icon('message')}${esc(t('msg.title'))}</button>
         </div>` : ''}
-      ${r.status === 'accepted' ? `
+      ${hostingEnabled && !showTrips && r.status === 'accepted' ? `
         <div class="request-item__actions">
           <button class="btn btn--outline btn--sm" data-action="message-guest" data-id="${r.id}">${icon('message')}${esc(t('msg.title'))}</button>
+          <button class="btn btn--outline btn--sm" data-action="review-member" data-id="${r.userId}" data-name="${esc(r.guestName)}">${icon('star')}${esc(t('dash.review'))}</button>
         </div>` : ''}
     </div>`;
 
@@ -754,6 +765,16 @@ export function dashboardView(tab = 'requests') {
       </section>
 
       <section class="form-section">
+        <div class="form-section__head"><h4>${esc(t('gallery.title'))}</h4><p class="tiny muted">${esc(t('gallery.hint'))}</p></div>
+        <div class="gallery">
+          ${store.galleryFor(user.id).map((src, i) => `<div class="gallery__item"><img src="${esc(src)}" alt="" loading="lazy" />
+            <button type="button" class="icon-btn gallery__x" data-action="clear-photo" data-kind="gallery" data-index="${i}" data-host="${user.id}" aria-label="${esc(t('upload.remove'))}">${icon('x')}</button></div>`).join('')}
+        </div>
+        ${store.galleryFor(user.id).length < 8 ? `<label class="btn btn--outline btn--sm file-btn" style="justify-self:start">${icon('plus')}${esc(t('gallery.add'))}
+          <input type="file" accept="image/*" data-photo="gallery" data-host="${user.id}" /></label>` : ''}
+      </section>
+
+      <section class="form-section">
         <div class="form-section__head"><h4>${esc(t('host.about'))}</h4></div>
         <div class="grid grid--2" style="gap:14px">
           <div class="field"><label for="p-name">${esc(t('auth.name'))}</label>
@@ -787,6 +808,15 @@ export function dashboardView(tab = 'requests') {
             </select></div>
         </div>
         <label class="check"><input type="checkbox" name="womenOnly" ${hosting.womenOnly ? 'checked' : ''} />${esc(t('host.women'))}</label>
+        <div class="field"><label>${esc(t('profile.avail'))}</label>
+          <div class="grid grid--2" style="gap:14px">
+            <input class="input" type="date" name="availableFrom" value="${esc(hosting.availableFrom || '')}" />
+            <input class="input" type="date" name="availableTo" value="${esc(hosting.availableTo || '')}" />
+          </div></div>
+        <div class="field"><label for="p-tags">${esc(t('profile.amenities'))}</label>
+          <input class="input" id="p-tags" name="tags" value="${esc((hosting.tags || []).join(', '))}" /></div>
+        <div class="field"><label for="p-rules">${esc(t('profile.rules'))}</label>
+          <textarea class="textarea" id="p-rules" name="rules" rows="3">${esc((hosting.rules || []).join('\n'))}</textarea></div>
         <div><a class="btn btn--outline btn--sm" href="#/form-c">${icon('shield')}${esc(t('nav.formc'))}</a></div>
       </section>
 
@@ -823,11 +853,22 @@ export function dashboardView(tab = 'requests') {
       </div>
     </form>
     <section class="card settings-card">
+      <h4>${esc(t('set.blocked'))}</h4>
+      <label class="check"><input type="checkbox" name="notify" ${user.notify === false ? '' : 'checked'} />${esc(t('set.notify'))}</label>
+      ${(user.blocks || []).length ? (user.blocks || []).map((id) => `<div class="settings-row"><span>${esc(nameFor(id))}</span><button class="btn btn--outline btn--sm" data-action="unblock-user" data-id="${id}">${esc(t('set.unblock'))}</button></div>`).join('') : `<p class="small muted">${esc(t('set.noneBlocked'))}</p>`}
+    </section>
+    <section class="card settings-card">
       <h4>${esc(t('set.account'))}</h4>
       <div class="settings-row"><span>${esc(user.email)}</span>${user.emailVerified ? `<span class="badge badge--verified">${icon('shield')}${esc(t('host.verified'))}</span>` : ''}</div>
       <div class="settings-row"><a class="btn btn--outline btn--sm" href="#/form-c">${icon('shield')}${esc(t('nav.formc'))}</a><a class="btn btn--outline btn--sm" href="#/safety">${esc(t('nav.safety'))}</a></div>
       <button class="btn btn--outline btn--block" type="button" data-action="logout">${icon('logout')}${esc(t('nav.logout'))}</button>
-    </section>`;
+    </section>
+    <form class="card settings-card" id="delete-account-form" style="border-color:#F3C7C3">
+      <h4>${esc(t('set.delete'))}</h4>
+      <p class="small muted">${esc(t('set.deleteHint'))}</p>
+      <input class="input" type="password" name="password" required placeholder="${esc(t('auth.currentPassword'))}" autocomplete="current-password" />
+      <button class="btn btn--danger" type="submit">${esc(t('set.delete'))}</button>
+    </form>`;
 
   return `
   <div class="container dash-layout">
@@ -928,7 +969,9 @@ export function messagesView(threadId) {
             <img class="avatar" src="${avatar(other(active), active.id)}" alt="" />
             <strong>${esc(other(active))}</strong>
             <span class="spacer"></span>
-            <a class="btn btn--outline btn--sm" href="#/host/${active.hostId}">${esc(t('nav.profile'))}</a>
+            <a class="btn btn--outline btn--sm" href="${active.hostId === user.id ? '#/member/' + active.userId : '#/host/' + active.hostId}">${esc(t('nav.profile'))}</a>
+            <button class="btn btn--ghost btn--sm" data-action="report" data-type="member" data-id="${active.hostId === user.id ? active.userId : active.hostId}" data-name="${esc(other(active))}">${icon('flag')}</button>
+            <button class="btn btn--ghost btn--sm" data-action="block-user" data-id="${active.hostId === user.id ? active.userId : active.hostId}">${esc(t('msg.block'))}</button>
           </div>
           <div class="thread-pane__body" id="thread-body">
             ${msgs.map((m) => `
@@ -987,7 +1030,6 @@ export function adminView(tab = 'reports') {
   <div class="container section--tight">
     <div class="row row--between" style="margin-bottom:18px;flex-wrap:wrap;gap:12px">
       <h1 style="font-size:1.7rem">${esc(t('admin.title'))}</h1>
-      <span class="badge badge--women">${icon('shield')}${esc(t('common.demo'))}</span>
     </div>
 
     <div class="grid grid--4" style="margin-bottom:26px">
@@ -1151,7 +1193,7 @@ export function requestModal(hostId) {
   </div>`;
 }
 
-export function reportModal(hostId, hostName) {
+export function reportModal(hostId, hostName, type = 'host') {
   return `
   <div class="modal-backdrop" data-action="close-modal">
     <div class="modal" role="dialog" aria-modal="true" onclick="event.stopPropagation()">
@@ -1160,7 +1202,7 @@ export function reportModal(hostId, hostName) {
         <button class="icon-btn" data-action="close-modal" aria-label="${esc(t('common.close'))}">${icon('x')}</button>
       </div>
       <p class="small muted">${esc(hostName)}</p>
-      <form id="report-form" data-id="${hostId}" data-name="${esc(hostName)}" class="stack" style="gap:14px">
+      <form id="report-form" data-type="${esc(type)}" data-id="${hostId}" data-name="${esc(hostName)}" class="stack" style="gap:14px">
         <div class="field"><label for="rp-reason">${esc(t('admin.reports'))}</label>
           <select class="select" id="rp-reason" name="reason">
             <option value="Asked for money">Asked for money</option>
@@ -1177,6 +1219,87 @@ export function reportModal(hostId, hostName) {
           <button type="submit" class="btn btn--danger">${icon('flag')}${esc(t('admin.reports'))}</button>
         </div>
       </form>
+    </div>
+  </div>`;
+}
+
+export function editRequestModal(r) {
+  return `
+  <div class="modal-backdrop" data-action="close-modal">
+    <div class="modal" role="dialog" aria-modal="true" onclick="event.stopPropagation()">
+      <div class="row row--between"><h3>${esc(t('dash.edit'))}</h3>
+        <button class="icon-btn" data-action="close-modal" aria-label="${esc(t('common.close'))}">${icon('x')}</button></div>
+      <form id="edit-request-form" data-id="${r.id}" class="stack" style="gap:14px">
+        <div class="grid grid--2" style="gap:14px">
+          <div class="field"><label>From</label><input class="input" type="date" name="from" value="${esc(r.from)}" required /></div>
+          <div class="field"><label>To</label><input class="input" type="date" name="to" value="${esc(r.to)}" required /></div>
+        </div>
+        <div class="field"><label>${esc(t('req.guests'))}</label>
+          <select class="select" name="guests">${[1, 2, 3, 4, 5, 6].map((n) => `<option ${Number(r.guests) === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+        <div class="row" style="gap:8px;justify-content:flex-end">
+          <button type="button" class="btn btn--ghost" data-action="close-modal">${esc(t('common.cancel'))}</button>
+          <button type="submit" class="btn btn--primary">${icon('check')}${esc(t('common.save'))}</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
+export function reviewModal(memberId, name) {
+  return `
+  <div class="modal-backdrop" data-action="close-modal">
+    <div class="modal" role="dialog" aria-modal="true" onclick="event.stopPropagation()">
+      <div class="row row--between"><h3>${esc(t('dash.review'))}</h3>
+        <button class="icon-btn" data-action="close-modal" aria-label="${esc(t('common.close'))}">${icon('x')}</button></div>
+      <p class="small muted">${esc(name)}</p>
+      <form id="review-form" data-id="${memberId}" class="stack" style="gap:14px">
+        <div class="field"><label>${esc(t('req.rating'))}</label>
+          <select class="select" name="rating">${[5, 4, 3, 2, 1].map((n) => `<option value="${n}">${'★'.repeat(n)}</option>`).join('')}</select></div>
+        <div class="field"><label>${esc(t('req.message'))}</label><textarea class="textarea" name="text" required></textarea></div>
+        <div class="row" style="gap:8px;justify-content:flex-end">
+          <button type="button" class="btn btn--ghost" data-action="close-modal">${esc(t('common.cancel'))}</button>
+          <button type="submit" class="btn btn--primary">${icon('check')}${esc(t('common.save'))}</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
+export function memberView(id, data) {
+  if (!data) {
+    return `<div class="container section" style="text-align:center"><p class="muted">…</p></div>`;
+  }
+  const m = data.member;
+  const reviews = data.reviews || [];
+  const avg = reviews.length ? (reviews.reduce((n, r) => n + (Number(r.rating) || 0), 0) / reviews.length).toFixed(1) : null;
+  const gallery = m.gallery || [];
+  return `
+  <div class="container profile-hero">
+    <div class="profile-cover"><img src="${coverFor(m, 1200, 400)}" alt="" /></div>
+    <div class="profile-head">
+      ${avatarFor(m, 'avatar--xl')}
+      <div style="flex:1;min-width:200px;padding-bottom:8px">
+        <h1 style="font-size:clamp(1.6rem,3vw,2.1rem);margin-bottom:8px">${esc(m.name)}</h1>
+        <div class="row row--wrap" style="gap:8px">
+          ${m.username ? `<span class="badge">@${esc(m.username)}</span>` : ''}
+          ${m.city ? `<span class="badge">${icon('pin')}${esc(m.city)}</span>` : ''}
+          ${m.verified || m.emailVerified ? `<span class="badge badge--verified">${icon('shield')}${esc(t('host.verified'))}</span>` : ''}
+          ${avg ? `<span class="badge">${icon('star')}${avg} · ${reviews.length}</span>` : ''}
+          ${m.joined ? `<span class="badge">${esc(t('member.joined'))} ${esc(m.joined)}</span>` : ''}
+        </div>
+      </div>
+      ${m.isHost ? `<a class="btn btn--outline btn--sm" href="#/host/${m.id}">${icon('users')}${esc(t('nav.explore'))}</a>` : ''}
+    </div>
+    <div class="stack" style="gap:18px;margin-top:22px;max-width:820px">
+      ${m.bio ? `<section class="card"><h3 style="margin-bottom:8px">${esc(t('host.about'))}</h3><p>${esc(m.bio)}</p>
+        ${(m.languages || []).length ? `<p class="small muted" style="margin-top:10px">${esc(t('host.speaks'))}: ${esc(m.languages.join(', '))}</p>` : ''}</section>` : ''}
+      ${gallery.length ? `<section class="card"><h3 style="margin-bottom:12px">${esc(t('gallery.title'))}</h3><div class="gallery">${gallery.map((src) => `<button type="button" class="gallery__item" data-action="view-photo" data-src="${esc(src)}"><img src="${esc(src)}" alt="" loading="lazy" /></button>`).join('')}</div></section>` : ''}
+      <section class="card">
+        <h3 style="margin-bottom:12px">${esc(t('member.reviews'))}${avg ? ` · ${icon('star')} ${avg}` : ''}</h3>
+        ${reviews.length ? reviews.map((r) => `<div class="request-item" style="margin-bottom:10px">
+          <div class="row row--between"><strong>${esc(r.author || '')}</strong><span class="small muted">${'★'.repeat(Math.round(Number(r.rating) || 0))} · ${esc(r.date || '')}</span></div>
+          <p class="request-item__msg">${esc(r.text || '')}</p></div>`).join('') : `<p class="small muted">${esc(t('member.noReviews'))}</p>`}
+      </section>
     </div>
   </div>`;
 }

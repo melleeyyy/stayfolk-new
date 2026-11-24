@@ -121,7 +121,7 @@ function footerHTML() {
     </div>
     <div class="footer-bottom">
       <span>${esc(t('footer.rights'))}</span>
-      <span>${esc(langMeta(getLang()).native)} · ${esc(t('common.demo'))}</span>
+      <span>${esc(langMeta(getLang()).native)}</span>
     </div>
   </div>`;
 }
@@ -139,6 +139,8 @@ function bottomNavHTML() {
     ${user ? it('#/dashboard', 'users', t('nav.dashboard'), p === 'dashboard') : it('#/login', 'users', t('nav.login'), p === 'login' || p === 'signup')}
   </nav>`;
 }
+
+const memberFail = {};
 
 function currentPath() {
   const raw = location.hash.replace(/^#\/?/, '');
@@ -190,6 +192,19 @@ function route() {
       const h = hostById(segs[1]);
       html = V.hostView(segs[1]);
       title = h ? `${h.name} — StayFolk` : 'StayFolk';
+      break;
+    }
+    case 'member': {
+      const id = segs[1];
+      const data = store.cachedMember(id);
+      if (!store.currentUser()) { html = V.authView('login'); title = 'StayFolk'; break; }
+      if (data) html = V.memberView(id, data);
+      else if (memberFail[id]) html = V.notFoundView();
+      else {
+        html = V.memberView(id, null);
+        store.fetchMember(id).then(() => route()).catch(() => { memberFail[id] = true; route(); });
+      }
+      title = `${data ? data.member.name : 'StayFolk'} — StayFolk`;
       break;
     }
     case 'how':
@@ -346,7 +361,7 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'report': {
-      openModal(V.reportModal(el.dataset.id, el.dataset.name || ''));
+      openModal(V.reportModal(el.dataset.id, el.dataset.name || '', el.dataset.type || 'host'));
       break;
     }
     case 'copy-link': {
@@ -372,7 +387,8 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'clear-photo': {
-      await store.clearPhoto(el.dataset.host, el.dataset.kind);
+      if (el.dataset.kind === 'gallery') await store.removeGalleryPhoto(el.dataset.host, Number(el.dataset.index));
+      else await store.clearPhoto(el.dataset.host, el.dataset.kind);
       route();
       break;
     }
@@ -386,6 +402,39 @@ document.addEventListener('click', async (e) => {
         deferredPrompt = null;
         syncInstall();
       });
+      break;
+    }
+    case 'view-photo': {
+      openModal(`<div class="modal-backdrop" data-action="close-modal" style="display:grid;place-items:center"><img src="${esc(el.dataset.src)}" alt="" style="max-width:94vw;max-height:88vh;border-radius:14px" /></div>`);
+      break;
+    }
+    case 'onb-next': { onbGo(onbIndex + 1); break; }
+    case 'onb-skip': { closeOnboarding(); break; }
+    case 'onb-go': { closeOnboarding(); go(el.dataset.to || '/'); break; }
+    case 'cancel-request': {
+      if (!confirm(t('dash.cancelConfirm'))) break;
+      try { await store.editRequest(el.dataset.id, { status: 'cancelled' }); toast(t('dash.cancelled')); } catch (err) { toast(err.message, 'error'); }
+      route();
+      break;
+    }
+    case 'edit-request': {
+      const r = store.get().requests.find((x) => x.id === el.dataset.id);
+      if (r) openModal(V.editRequestModal(r));
+      break;
+    }
+    case 'review-member': {
+      openModal(V.reviewModal(el.dataset.id, el.dataset.name || ''));
+      break;
+    }
+    case 'block-user': {
+      if (!confirm(t('msg.blockConfirm'))) break;
+      try { await store.blockUser(el.dataset.id, true); toast(t('msg.block')); } catch (err) { toast(err.message, 'error'); }
+      go('/dashboard/settings');
+      break;
+    }
+    case 'unblock-user': {
+      try { await store.blockUser(el.dataset.id, false); } catch (err) { toast(err.message, 'error'); }
+      route();
       break;
     }
     case 'respond': {
@@ -457,6 +506,10 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.name === 'notify' && e.target.type === 'checkbox') {
+    store.updateProfile({ notify: e.target.checked }).then(() => toast(t('profile.saved'))).catch((err) => toast(err.message, 'error'));
+    return;
+  }
   if (e.target.id === 'lang-select' || e.target.classList.contains('lang-pick')) {
     const code = e.target.value;
     store.setLang(code);
@@ -525,7 +578,8 @@ async function handlePhoto(input) {
   try {
     const kind = input.dataset.photo;
     const dataUrl = await readImage(file, kind === 'avatar' ? 640 : 1600);
-    await store.setPhoto(input.dataset.host, kind, dataUrl);
+    if (kind === 'gallery') await store.addGalleryPhoto(input.dataset.host, dataUrl);
+    else await store.setPhoto(input.dataset.host, kind, dataUrl);
     toast(t('upload.change'));
     route();
   } catch {
@@ -713,6 +767,10 @@ document.addEventListener('submit', async (e) => {
           space: String(fd.get('space') || ''),
           maxGuests: Number(fd.get('maxGuests')) || 1,
           womenOnly: Boolean(fd.get('womenOnly')),
+          availableFrom: String(fd.get('availableFrom') || ''),
+          availableTo: String(fd.get('availableTo') || ''),
+          tags: String(fd.get('tags') || '').split(',').map((x) => x.trim()).filter(Boolean),
+          rules: String(fd.get('rules') || '').split('\n').map((x) => x.trim()).filter(Boolean),
         },
       });
       toast(t('profile.saved'));
@@ -723,11 +781,41 @@ document.addEventListener('submit', async (e) => {
     return;
   }
 
+  if (form.id === 'edit-request-form') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    try {
+      await store.editRequest(form.dataset.id, { from: String(fd.get('from')), to: String(fd.get('to')), guests: Number(fd.get('guests')) });
+      closeModal(); toast(t('profile.saved')); route();
+    } catch (err) { toast(err.message, 'error'); }
+    return;
+  }
+
+  if (form.id === 'review-form') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    try {
+      await store.addReview({ hostId: form.dataset.id, rating: Number(fd.get('rating')), text: String(fd.get('text') || '') });
+      closeModal(); toast(t('profile.saved')); route();
+    } catch (err) { toast(err.message, 'error'); }
+    return;
+  }
+
+  if (form.id === 'delete-account-form') {
+    e.preventDefault();
+    if (!confirm(t('set.deleteHint'))) return;
+    try {
+      await store.deleteAccount(String(new FormData(form).get('password') || ''));
+      toast(t('set.delete')); go('/');
+    } catch (err) { toast(err.message, 'error'); }
+    return;
+  }
+
   if (form.id === 'report-form') {
     e.preventDefault();
     const fd = new FormData(form);
     await store.addReport({
-      targetType: 'host',
+      targetType: form.dataset.type || 'host',
       targetId: form.dataset.id,
       targetName: form.dataset.name,
       reason: String(fd.get('reason') || ''),
@@ -783,6 +871,100 @@ function startPolling() {
   }, 5000);
 }
 
+/* ------------------------------------------------ splash + onboarding */
+
+function hideSplash() {
+  const el = document.getElementById('splash');
+  try { sessionStorage.setItem('sf.splash', '1'); } catch { /* private mode */ }
+  if (!el) return;
+  const wait = Math.max(0, 1900 - performance.now());
+  setTimeout(() => {
+    el.classList.add('is-out');
+    setTimeout(() => el.remove(), 500);
+  }, wait);
+}
+
+const ONB = {
+  en: {
+    skip: 'Skip', next: 'Next', create: 'Create account', login: 'Log in', browse: 'Browse first',
+    slides: [
+      ['Travel like a local', 'New places, real friendships. See the world through the eyes of the people who live there.'],
+      ['Stay free with local hosts', 'Verified hosts open their homes to travelers. No fees, just good company.'],
+      ['Meet fellow travelers', 'Share stories, explore the city together and find friends for life.'],
+      ['Safe, free and community-run', 'Reviews, verification, block and report tools keep every stay respectful.'],
+    ],
+  },
+  ml: {
+    skip: 'ഒഴിവാക്കുക', next: 'അടുത്തത്', create: 'അക്കൗണ്ട് ഉണ്ടാക്കൂ', login: 'ലോഗിൻ', browse: 'ആദ്യം ചുറ്റിനോക്കാം',
+    slides: [
+      ['നാട്ടുകാരനെപ്പോലെ യാത്ര ചെയ്യൂ', 'പുതിയ നാടുകൾ, യഥാർത്ഥ സൗഹൃദങ്ങൾ. അവിടെ ജീവിക്കുന്നവരുടെ കണ്ണിലൂടെ ലോകം കാണൂ.'],
+      ['ലോക്കൽ ഹോസ്റ്റിനൊപ്പം സൗജന്യ താമസം', 'വെരിഫൈ ചെയ്ത ഹോസ്റ്റുകൾ യാത്രക്കാരെ വീട്ടിലേക്ക് സ്വാഗതം ചെയ്യുന്നു. ഫീസില്ല, നല്ല കൂട്ട് മാത്രം.'],
+      ['സഹയാത്രികരെ കണ്ടുമുട്ടൂ', 'കഥകൾ പങ്കിടൂ, നഗരം ഒരുമിച്ച് ചുറ്റൂ, ജീവിതകാലം നീളുന്ന സുഹൃത്തുക്കളെ കണ്ടെത്തൂ.'],
+      ['സുരക്ഷിതം, സൗജന്യം, കമ്മ്യൂണിറ്റി നടത്തുന്നത്', 'റിവ്യൂ, വെരിഫിക്കേഷൻ, ബ്ലോക്ക്, റിപ്പോർട്ട് എന്നിവ ഓരോ താമസവും ബഹുമാനത്തോടെ ആക്കുന്നു.'],
+    ],
+  },
+};
+
+const ONB_ART = [
+  '<svg viewBox="0 0 320 220" role="img" aria-label=""><rect width="320" height="220" rx="24" fill="#DCE8FF"/><circle cx="252" cy="58" r="26" fill="#FFC857"/><path d="M0 170 80 78l52 62 40-46 148 126z" fill="#7AA5FB"/><path d="M0 192 62 130l58 50 72-62 128 102z" fill="#3A79F7"/><path d="M0 220v-28c60-20 120-10 180 0s100 10 140-6v34z" fill="#2FB67C"/><circle cx="150" cy="146" r="10" fill="#1B2A4A"/><rect x="140" y="156" width="20" height="34" rx="9" fill="#1B2A4A"/><rect x="129" y="160" width="14" height="24" rx="6" fill="#FF7A59"/><path d="M215 60c10-8 20-8 30 0M232 44c8-6 16-6 24 0" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>',
+  '<svg viewBox="0 0 320 220" role="img" aria-label=""><rect width="320" height="220" rx="24" fill="#FFE9D6"/><circle cx="60" cy="52" r="22" fill="#FFC857"/><path d="M76 112 160 46l84 66z" fill="#FF7A59"/><rect x="94" y="112" width="132" height="78" fill="#fff"/><rect x="146" y="138" width="30" height="52" rx="4" fill="#3A79F7"/><rect x="106" y="128" width="28" height="24" rx="3" fill="#DCE8FF"/><rect x="186" y="128" width="28" height="24" rx="3" fill="#DCE8FF"/><path d="M160 100c-12-9-18-16-12-22 4-4 10-2 12 3 2-5 8-7 12-3 6 6 0 13-12 22z" fill="#fff"/><path d="M0 220v-30c70-14 130-8 190 0s90 6 130-4v34z" fill="#2FB67C"/></svg>',
+  '<svg viewBox="0 0 320 220" role="img" aria-label=""><rect width="320" height="220" rx="24" fill="#DDF5EA"/><circle cx="110" cy="120" r="16" fill="#1B2A4A"/><rect x="92" y="138" width="36" height="52" rx="16" fill="#3A79F7"/><circle cx="210" cy="120" r="16" fill="#1B2A4A"/><rect x="192" y="138" width="36" height="52" rx="16" fill="#FF7A59"/><rect x="60" y="40" width="96" height="44" rx="14" fill="#fff"/><path d="M90 84l-8 14 22-14z" fill="#fff"/><rect x="170" y="62" width="92" height="40" rx="14" fill="#3A79F7"/><path d="M236 102l10 14-24-14z" fill="#3A79F7"/><circle cx="82" cy="62" r="4" fill="#7AA5FB"/><circle cx="108" cy="62" r="4" fill="#7AA5FB"/><circle cx="134" cy="62" r="4" fill="#7AA5FB"/><path d="M0 220v-24h320v24z" fill="#2FB67C"/></svg>',
+  '<svg viewBox="0 0 320 220" role="img" aria-label=""><rect width="320" height="220" rx="24" fill="#E8E4FF"/><path d="M160 30 232 58v54c0 42-30 64-72 80-42-16-72-38-72-80V58z" fill="#3A79F7"/><path d="M122 112l26 26 50-56" stroke="#fff" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="64" cy="64" r="6" fill="#FFC857"/><circle cx="262" cy="150" r="8" fill="#FF7A59"/><circle cx="248" cy="46" r="5" fill="#2FB67C"/></svg>',
+];
+
+let onbIndex = 0;
+
+function onboardingSeen() {
+  try { return localStorage.getItem('stayfolk.onboarded') === '1'; } catch { return true; }
+}
+
+function onbRender() {
+  const L = ONB[getLang()] || ONB.en;
+  const last = onbIndex === L.slides.length - 1;
+  const [title, text] = L.slides[onbIndex];
+  return `
+  <div class="onb__top"><span class="onb__brand">${BRAND_MARK}<span>StayFolk</span></span>
+    ${last ? '' : `<button class="btn btn--ghost btn--sm" data-action="onb-skip">${esc(L.skip)}</button>`}</div>
+  <div class="onb__art" key="${onbIndex}">${ONB_ART[onbIndex]}</div>
+  <div class="onb__body">
+    <h2>${esc(title)}</h2>
+    <p>${esc(text)}</p>
+    <div class="onb__dots">${L.slides.map((_, i) => `<span class="${i === onbIndex ? 'is-on' : ''}"></span>`).join('')}</div>
+  </div>
+  <div class="onb__actions">
+    ${last
+      ? `<a class="btn btn--primary btn--block" href="#/signup" data-action="onb-go" data-to="/signup">${esc(L.create)}</a>
+         <a class="btn btn--outline btn--block" href="#/login" data-action="onb-go" data-to="/login">${esc(L.login)}</a>
+         <button class="btn btn--ghost btn--block" data-action="onb-skip">${esc(L.browse)}</button>`
+      : `<button class="btn btn--primary btn--block" data-action="onb-next">${esc(L.next)}</button>`}
+  </div>`;
+}
+
+function onbGo(i) {
+  const L = ONB[getLang()] || ONB.en;
+  onbIndex = Math.max(0, Math.min(L.slides.length - 1, i));
+  const el = document.getElementById('onboard');
+  if (el) el.innerHTML = onbRender();
+}
+
+function showOnboarding() {
+  if (document.getElementById('onboard')) return;
+  onbIndex = 0;
+  const el = document.createElement('div');
+  el.id = 'onboard';
+  el.className = 'onb';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.innerHTML = onbRender();
+  document.body.appendChild(el);
+}
+
+function closeOnboarding() {
+  try { localStorage.setItem('stayfolk.onboarded', '1'); } catch { /* ignore */ }
+  const el = document.getElementById('onboard');
+  if (el) { el.classList.add('is-out'); setTimeout(() => el.remove(), 300); }
+}
+
 async function boot() {
   await store.init();
 
@@ -793,6 +975,8 @@ async function boot() {
 
   if (!location.hash) location.hash = '#/';
   route();
+  hideSplash();
+  if (!store.currentUser() && !onboardingSeen() && !['login', 'signup', 'forgot', 'reset', 'verify'].includes(currentPath())) showOnboarding();
   syncInstall();
   startPolling();
 
